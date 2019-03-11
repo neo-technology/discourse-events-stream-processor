@@ -22,6 +22,16 @@ provider:
   runtime: python2.7
   environment:
     INTERCOM_ACCESS_TOKEN: "${ssm:com.neo4j.devrel.integration.intercom_access_token~true}"
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "ssm:GetParameter"
+      Resource: "arn:aws:ssm:*:715633473519:parameter/com.neo4j.accounts.*"
+    - Effect: "Allow"
+      Action:
+        - "ssm:GetParameter"
+      Resource: "arn:aws:ssm:*:715633473519:parameter/com.neo4j.devrel.discourse.*"
+
 
 # you can overwrite defaults here
 #  stage: dev
