@@ -109,9 +109,15 @@ def get_external_id(username):
 
   r2 = requests.get('https://community.neo4j.com/admin/users/%s.json?api_key=%s' % (user_id, discourse_api_key))
   json_response = json.loads(r2.content)
-  external_id = json_response['single_sign_on_record']['external_id']
-  logger.info('Found external_id for user_id %s as: %s' % (user_id, external_id))
-  return external_id
+  logger.debug('Received /admin/users/(id).json response for id: %s' % (user_id))
+  logger.debug(r2.content)
+  if json_response and ('single_sign_on_record' in json_response) and (json_response['single_sign_on_record']) and ('external_id' in json_response['single_sign_on_record']):
+    external_id = json_response['single_sign_on_record']['external_id']
+    logger.info('Found external_id for user_id %s as: %s' % (user_id, external_id))
+    return external_id
+  else:
+    logger.info('DID NOT find external_id for user_id %s' % (user_id))
+    return None
 
 def get_admin_user_profile(user_id):
   logger.debug('Fetching https://community.neo4j.com/admin/users/%s.json?api_key=%s' % (user_id, discourse_api_key))
@@ -144,27 +150,36 @@ def post_event(event, context):
   else:
     username = None
 
-  # POST INTERCOM EVENT
-  payload = {
-    'user_id': get_external_id(username),
-    'created_at': int(time.time()),
-    'event_name': intercom_event_name,
-    'metadata': {
-       'url': url,
-       'topic': topic
-     }
-  }
-  r = requests.post('https://api.intercom.io/events', data=json.dumps(payload), headers=intercom_headers)
-  if r.status_code == 202:
-    logger.info("Event sent to intercom successfully")
-  else: 
-    logger.error("Intercom event failure: %s" % (str(r.status_code)))
-    logger.error(r.content)
+  external_id =  get_external_id(username)
 
-  body = {
-      "message": "Post event handled - sent to Intercom.",
-      "input": event
-  }
+  if external_id:
+    # POST INTERCOM EVENT
+    payload = {
+      'user_id': external_id,
+      'created_at': int(time.time()),
+      'event_name': intercom_event_name,
+      'metadata': {
+         'url': url,
+         'topic': topic
+       }
+    }
+
+    r = requests.post('https://api.intercom.io/events', data=json.dumps(payload), headers=intercom_headers)
+    if r.status_code == 202:
+      logger.info("Event sent to intercom successfully")
+    else: 
+      logger.error("Intercom event failure: %s" % (str(r.status_code)))
+      logger.error(r.content)
+
+    body = {
+        "message": "Post event handled - sent to Intercom.",
+        "input": event
+    }
+  else:
+    body = {
+        "message": "Post event NOT sent to Intercom. No external_id.",
+        "input": event
+    }
 
   response = {
       "statusCode": 200,
@@ -210,42 +225,52 @@ def user_event(event, context):
         else:
           logger.info('Email already verified in auth0')
 
-    # POST INTERCOM EVENT
-    payload = {
-      'user_id': dc_user['external_id'],
-      'created_at': int(time.time()),
-      'event_name': intercom_event_name,
-      'metadata': {}
-    }
-    r = requests.post('https://api.intercom.io/events', data=json.dumps(payload), headers=intercom_headers)
-    if r.status_code == 202:
-      logger.info("Event sent to intercom successfully")
-    else: 
-      logger.error("Intercom event failure: %s" % (str(r.status_code)))
-      logger.error(r.content)
-
-    # POST INTERCOM USER INFO - STATS
-    for stat in dc_user['stats']:
-      if stat['action_type'] == 4:
-          dc_topics_created = stat['count']
-      elif stat['action_type'] == 5:
-          dc_posts_created = stat['count']
-    
-    logger.info("Stats dc_posts_created: %s" % (dc_posts_created))
-    logger.info("Stats dc_topics_created: %s" % (dc_topics_created))
-
-    payload = {
-      'user_id': dc_user['external_id'],
-      'custom_attributes': {
-        'discourse_posts_created': dc_posts_created,
-        'discourse_topics_created': dc_topics_created
+      # POST INTERCOM EVENT
+      payload = {
+        'user_id': dc_user['external_id'],
+        'created_at': int(time.time()),
+        'event_name': intercom_event_name,
+        'metadata': {}
       }
-    }
-    r2 = requests.post('https://api.intercom.io/users', data=json.dumps(payload), headers=intercom_headers)
-    if r2.status_code == 200:
-      logger.info("Updated intercom successfully")
-    else: 
-      logger.error("Intercom update failure: %s" % (str(r2.status_code)))
-      logger.info("Intercom update failure: %s" % (str(r2.content)))
+      r = requests.post('https://api.intercom.io/events', data=json.dumps(payload), headers=intercom_headers)
+      if r.status_code == 202:
+        logger.info("Event sent to intercom successfully")
+      else: 
+        logger.error("Intercom event failure: %s" % (str(r.status_code)))
+        logger.error(r.content)
+
+      # POST INTERCOM USER INFO - STATS
+      for stat in dc_user['stats']:
+        if stat['action_type'] == 4:
+            dc_topics_created = stat['count']
+        elif stat['action_type'] == 5:
+            dc_posts_created = stat['count']
+      
+      logger.info("Stats dc_posts_created: %s" % (dc_posts_created))
+      logger.info("Stats dc_topics_created: %s" % (dc_topics_created))
+
+      payload = {
+        'user_id': dc_user['external_id'],
+        'custom_attributes': {
+          'discourse_posts_created': dc_posts_created,
+          'discourse_topics_created': dc_topics_created
+        }
+      }
+      r2 = requests.post('https://api.intercom.io/users', data=json.dumps(payload), headers=intercom_headers)
+      if r2.status_code == 200:
+        logger.info("Updated intercom successfully")
+      else: 
+        logger.error("Intercom update failure: %s" % (str(r2.status_code)))
+        logger.info("Intercom update failure: %s" % (str(r2.content)))
+
+    else:
+      body = {
+          "message": "User event NOT handled as could not send to Intercom.  No external ID.",
+          "input": event
+      }
+      response = {
+          "statusCode": 200,
+          "body": json.dumps(body)
+      }
 
     return response
